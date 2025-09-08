@@ -66,12 +66,31 @@ class MinimalGRPOTrainer:
         
         for i in range(self.group_size):
             try:
+                # AGGRESSIVE NUMERICAL STABILITY: Clear cache and check model state
+                torch.cuda.empty_cache()
+                
+                # Check model parameters for inf/nan BEFORE generation
+                for name, param in self.policy_model.model.named_parameters():
+                    if torch.isnan(param).any() or torch.isinf(param).any():
+                        self.logger.log_error(f"NaN/Inf detected in {name} before generation!", "generate_attack_prompts")
+                        raise ValueError(f"Model parameter {name} contains NaN/Inf values")
+                
+                # CONSERVATIVE GENERATION: Lower temperature to prevent numerical instability
+                safe_temperature = min(self.temperature, 0.7)  # Cap at 0.7 for stability
+                
                 attack_prompt = self.policy_model.generate(
                     instruction, 
                     max_new_tokens=self.max_length,
-                    temperature=self.temperature,
-                    do_sample=True
+                    temperature=safe_temperature,
+                    do_sample=True,
+                    top_p=0.9,  # Add nucleus sampling for stability
+                    pad_token_id=self.policy_model.tokenizer.eos_token_id  # Prevent padding issues
                 )
+                
+                # Validate generated text
+                if not attack_prompt or len(attack_prompt.strip()) == 0:
+                    raise ValueError("Generated empty attack prompt")
+                    
                 attack_prompts.append(attack_prompt.strip())
                 
                 # REAL-TIME PROGRESS: Log each attack as generated
@@ -127,6 +146,15 @@ class MinimalGRPOTrainer:
         
         for i, (attack_prompt, advantage) in enumerate(zip(attack_prompts, advantages)):
             try:
+                # AGGRESSIVE NUMERICAL STABILITY: Clear cache before each computation
+                torch.cuda.empty_cache()
+                
+                # Check model parameters for inf/nan BEFORE forward pass
+                for name, param in self.policy_model.model.named_parameters():
+                    if torch.isnan(param).any() or torch.isinf(param).any():
+                        self.logger.log_error(f"NaN/Inf detected in {name} before forward pass!", "compute_policy_loss")
+                        raise ValueError(f"Model parameter {name} contains NaN/Inf values")
+                
                 # Tokenize instruction + generated attack prompt
                 full_text = instruction + attack_prompt
                 inputs = self.policy_model.tokenizer(
@@ -140,22 +168,52 @@ class MinimalGRPOTrainer:
                 # Move to model device
                 inputs = {k: v.to(self.policy_model.model.device) for k, v in inputs.items()}
                 
+                # VALIDATE INPUT TENSORS
+                for key, tensor in inputs.items():
+                    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+                        self.logger.log_error(f"NaN/Inf detected in input {key}!", "compute_policy_loss")
+                        raise ValueError(f"Input tensor {key} contains NaN/Inf values")
+                
                 # CRITICAL: NO torch.no_grad() - we need gradients!
                 outputs = self.policy_model.model(**inputs)
                 logits = outputs.logits[0]  # [seq_len, vocab_size]
+                
+                # VALIDATE LOGITS
+                if torch.isnan(logits).any() or torch.isinf(logits).any():
+                    self.logger.log_error(f"NaN/Inf detected in logits!", "compute_policy_loss")
+                    raise ValueError("Model output logits contain NaN/Inf values")
                 
                 # Get tokens for the GENERATED part (attack prompt)
                 instruction_len = len(self.policy_model.tokenizer(instruction)['input_ids'])
                 attack_tokens = inputs['input_ids'][0][instruction_len:]
                 attack_logits = logits[instruction_len-1:-1]  # Shift for next-token prediction
                 
+                # SAFE COMPUTATION: Clamp logits to prevent numerical instability
+                attack_logits = torch.clamp(attack_logits, min=-50, max=50)  # Prevent extreme values
+                
                 # Compute log probabilities for generated tokens
                 log_probs = F.log_softmax(attack_logits, dim=-1)
+                
+                # VALIDATE LOG_PROBS
+                if torch.isnan(log_probs).any() or torch.isinf(log_probs).any():
+                    self.logger.log_error(f"NaN/Inf detected in log_probs!", "compute_policy_loss")
+                    raise ValueError("Log probabilities contain NaN/Inf values")
+                
                 token_log_probs = log_probs.gather(1, attack_tokens.unsqueeze(1)).squeeze(1)
                 
                 # REINFORCE loss: -advantage * sum(log_probs)
                 attack_log_prob = token_log_probs.sum()
+                
+                # VALIDATE FINAL VALUES
+                if torch.isnan(attack_log_prob) or torch.isinf(attack_log_prob):
+                    self.logger.log_error(f"NaN/Inf detected in attack_log_prob!", "compute_policy_loss")
+                    raise ValueError("Attack log probability contains NaN/Inf values")
+                
                 loss = -advantage * attack_log_prob
+                
+                if torch.isnan(loss) or torch.isinf(loss):
+                    self.logger.log_error(f"NaN/Inf detected in loss!", "compute_policy_loss")
+                    raise ValueError("Loss contains NaN/Inf values")
                 
                 # Accumulate (this will maintain gradients)
                 total_loss = total_loss + loss

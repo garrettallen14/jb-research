@@ -97,8 +97,8 @@ class PRBOReward:
                 continue
         
         # All retries failed - return neutral score
-        print(f"❌ All judge scoring attempts failed, using fallback score 0.0")
-        return 0.0  # Neutral fallback score (0-100 scale)
+        print(f"❌ All judge scoring attempts failed, using fallback score 50.0")
+        return 50.0  # Neutral fallback score (0-100 scale)
     
     def compute_reward(self, attack_attempt: str, behavior_data: Dict[str, str]) -> float:
         """
@@ -123,8 +123,8 @@ class PRBOReward:
                 steered_prompt = attack_attempt
             
             # Grade both responses
-            unsteered_grade = self.judge_response(unsteered_response, behavior, attack_attempt, optimizer_target)
-            steered_grade = self.judge_response(steered_response, behavior, attack_attempt, optimizer_target) if self.use_steering else unsteered_grade
+            unsteered_grade = self.judge_response(unsteered_response, behavior, attack_attempt)
+            steered_grade = self.judge_response(steered_response, behavior, attack_attempt) if self.use_steering else unsteered_grade
             
             # Choose the BETTER proposal between steered and unsteered
             if steered_grade > unsteered_grade:
