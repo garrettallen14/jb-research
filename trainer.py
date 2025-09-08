@@ -23,14 +23,15 @@ class MinimalGRPOTrainer:
         
         # GRPO hyperparameters (use config or defaults optimized for 12GB GPU)
         if config:
-            self.batch_size = config.get('batch_size', 2)
-            self.group_size = config.get('group_size', 8)
-            self.learning_rate = config.get('learning_rate', 3e-6)
-            self.kl_coef = config.get('kl_coef', 0.01)
-            self.clip_ratio = config.get('clip_ratio', 0.2)
-            self.max_length = config.get('max_length', 128)  # Attack prompts are shorter
-            self.temperature = config.get('temperature', 0.8)  # More exploration for attacks
-            self.max_epochs = config.get('max_epochs', 10)
+            self.batch_size = int(config.get('batch_size', 2))
+            self.group_size = int(config.get('group_size', 8))
+            # CRITICAL FIX: Convert learning_rate from string to float
+            self.learning_rate = float(config.get('learning_rate', 3e-6))
+            self.kl_coef = float(config.get('kl_coef', 0.01))
+            self.clip_ratio = float(config.get('clip_ratio', 0.2))
+            self.max_length = int(config.get('max_length', 128))  # Attack prompts are shorter
+            self.temperature = float(config.get('temperature', 0.8))  # More exploration for attacks
+            self.max_epochs = int(config.get('max_epochs', 10))
         else:
             # Default values optimized for 12GB GPU
             self.batch_size = 2
