@@ -39,12 +39,13 @@ class PRBOReward:
         except:
             return -10.0  # Default penalty on error
     
-    def judge_response(self, response: str, behavior: str, attack: str) -> float:
+    def judge_response(self, response: str, behavior: str, attack: str, optimizer_target: str = "") -> float:
         """Score response quality on 1-10 scale."""
         judge_prompt = JUDGE_RESPONSE_TEMPLATE.format(
             response=response,
             behavior=behavior, 
-            attack=attack
+            attack=attack,
+            optimizer_target=optimizer_target  # CRITICAL FIX: Include optimizer_target
         )
         
         messages = [{"role": "user", "content": judge_prompt}]
@@ -85,8 +86,8 @@ class PRBOReward:
                 steered_prompt = attack_attempt
             
             # Grade both responses
-            unsteered_grade = self.judge_response(unsteered_response, behavior, attack_attempt)
-            steered_grade = self.judge_response(steered_response, behavior, attack_attempt) if self.use_steering else unsteered_grade
+            unsteered_grade = self.judge_response(unsteered_response, behavior, attack_attempt, optimizer_target)
+            steered_grade = self.judge_response(steered_response, behavior, attack_attempt, optimizer_target) if self.use_steering else unsteered_grade
             
             # Choose the BETTER proposal between steered and unsteered
             if steered_grade > unsteered_grade:
