@@ -102,38 +102,60 @@ class MinimalGRPOTrainer:
         return attack_prompts
     
     def compute_group_rewards(self, attack_prompts: List[str], behavior_data: Dict[str, str]) -> List[float]:
-        """Compute PRBO rewards for attack prompts by testing on target model."""
-        self.logger.log(f"🎯 Computing PRBO rewards for {len(attack_prompts)} attacks...")
+        """Compute PRBO rewards for attack prompts PARALLEL for speed."""
+        self.logger.log(f"🎯 Computing PRBO rewards for {len(attack_prompts)} attacks IN PARALLEL...")
         
-        # Extract behavior string for PRBO computation
-        behavior = behavior_data["behavior"]
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
         
-        rewards = []
+        start_time = time.time()
+        rewards = [0.0] * len(attack_prompts)  # Pre-allocate with fallback values
         
-        for i, attack_prompt in enumerate(attack_prompts):
+        def compute_single_reward(args):
+            i, attack_prompt = args
             try:
-                # REAL-TIME PROGRESS: Log each evaluation
-                self.logger.log(f"🔍 Evaluating attack {i+1}/{len(attack_prompts)}...")
-                
                 # CRITICAL FIX: Pass full behavior_data to PRBO (includes optimizer_target)
                 reward = self.prbo_reward.compute_reward(attack_prompt, behavior_data)
-                rewards.append(reward)
-                
-                # IMMEDIATE FEEDBACK: Log each reward as computed
-                self.logger.log(f"📊 Attack {i+1} reward: {reward:.3f}")
-                    
+                return i, reward
             except Exception as e:
-                self.logger.log_error(f"PRBO reward failed: {e}", "compute_group_rewards")
-                rewards.append(1.0)  # Neutral fallback reward
+                self.logger.log_error(f"PRBO reward failed for attack {i+1}: {e}", "compute_group_rewards")
+                return i, 1.0  # Neutral fallback reward
         
+        # PARALLEL EXECUTION: Process all attacks simultaneously
+        with ThreadPoolExecutor(max_workers=min(4, len(attack_prompts))) as executor:
+            # Submit all tasks
+            future_to_index = {executor.submit(compute_single_reward, (i, attack_prompt)): i 
+                             for i, attack_prompt in enumerate(attack_prompts)}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_index):
+                try:
+                    i, reward = future.result()
+                    rewards[i] = reward
+                    # REAL-TIME PROGRESS: Log each completion
+                    self.logger.log(f"✅ Attack {i+1} reward: {reward:.3f}")
+                except Exception as e:
+                    i = future_to_index[future]
+                    self.logger.log_error(f"Parallel reward computation failed for attack {i+1}: {e}", "compute_group_rewards")
+                    rewards[i] = 1.0  # Fallback
+        
+        # PERFORMANCE LOGGING
+        elapsed_time = time.time() - start_time
         avg_reward = sum(rewards) / len(rewards) if rewards else 1.0
-        self.logger.log(f"📈 🔥 GROUP COMPLETE: Avg={avg_reward:.3f}, Min={min(rewards):.3f}, Max={max(rewards):.3f}")
+        self.logger.log(f"📈 🔥 GROUP COMPLETE: Avg={avg_reward:.3f}, Min={min(rewards):.3f}, Max={max(rewards):.3f} (in {elapsed_time:.1f}s)")
         return rewards
     
     def compute_relative_advantages(self, rewards: List[float]) -> List[float]:
-        """GRPO: Compare each reward to group average"""
-        group_avg = sum(rewards) / len(rewards)
+        """GRPO: Compare each reward to group average with numerical stability"""
+        group_avg = sum(rewards) / len(rewards) if rewards else 0.0
         advantages = [r - group_avg for r in rewards]
+        
+        # CRITICAL: Add small noise to prevent all-zero advantages
+        # Zero advantages cause numerical instability in policy loss
+        if all(abs(adv) < 1e-8 for adv in advantages):
+            self.logger.log("⚠️ All advantages near zero - adding stability noise")
+            advantages = [adv + 0.01 * (i - len(advantages)/2) for i, adv in enumerate(advantages)]
+        
         return advantages
     
     def compute_policy_loss(self, instruction: str, attack_prompts: List[str], advantages: List[float]) -> torch.Tensor:
