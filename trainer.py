@@ -295,8 +295,11 @@ class MinimalGRPOTrainer:
             self.logger.log_error("All training steps failed!", "train_step")
             return {"loss": 0.0, "avg_reward": 0.0, "valid_batches": 0}
         
-        # CRITICAL FIX: Aggressive gradient clipping to prevent parameter corruption
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_model.model.parameters(), 0.1)  # Much stricter!
+        # SAVE MODEL STATE BEFORE OPTIMIZER STEP
+        model_state_dict = {name: param.clone() for name, param in self.policy_model.model.named_parameters()}
+        
+        # CRITICAL FIX: ULTRA-aggressive gradient clipping to prevent parameter corruption
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_model.model.parameters(), 0.01)  # ULTRA strict!
         
         # CRITICAL FIX: Check for NaN/inf gradients before stepping
         has_nan_grad = False
@@ -309,7 +312,25 @@ class MinimalGRPOTrainer:
             self.logger.log_error("NaN/Inf gradients detected! Skipping optimizer step.", "train_step")
             self.optimizer.zero_grad()  # Clear corrupted gradients
         else:
+            # Take optimizer step
             self.optimizer.step()
+            
+            # CRITICAL: Validate model parameters AFTER optimizer step
+            model_corrupted = False
+            for name, param in self.policy_model.model.named_parameters():
+                if torch.isnan(param).any() or torch.isinf(param).any():
+                    self.logger.log_error(f"Model parameter corruption detected in {name} after optimizer step!", "train_step")
+                    model_corrupted = True
+                    break
+            
+            # RESTORE MODEL STATE if corruption detected
+            if model_corrupted:
+                self.logger.log_error("RESTORING model state from before optimizer step!", "train_step")
+                for name, param in self.policy_model.model.named_parameters():
+                    param.data.copy_(model_state_dict[name])
+                self.optimizer.zero_grad()  # Clear gradients
+            else:
+                self.logger.log(f"✅ Model parameters validated - no corruption detected")
         
         # Compute averages
         avg_loss = total_loss_value / valid_batches
