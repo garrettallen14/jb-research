@@ -111,9 +111,16 @@ class MinimalGRPOTrainer:
         start_time = time.time()
         rewards = [0.0] * len(attack_prompts)  # Pre-allocate with fallback values
         
+        # For batch-level judge score aggregation
+        self.batch_unsteered_scores = []
+        self.batch_steered_scores = []
+        
         def compute_single_reward(args):
             i, attack_prompt = args
             try:
+                # Pass trainer reference for score collection
+                self.prbo_reward._current_trainer = self
+                
                 # CRITICAL FIX: Pass full behavior_data to PRBO (includes optimizer_target)
                 reward = self.prbo_reward.compute_reward(attack_prompt, behavior_data)
                 return i, reward
@@ -142,6 +149,14 @@ class MinimalGRPOTrainer:
         # PERFORMANCE LOGGING
         elapsed_time = time.time() - start_time
         avg_reward = sum(rewards) / len(rewards) if rewards else 1.0
+        
+        # BATCH JUDGE SCORE SUMMARY
+        if hasattr(self, 'batch_unsteered_scores') and hasattr(self, 'batch_steered_scores'):
+            if self.batch_unsteered_scores and self.batch_steered_scores:
+                avg_unsteered = sum(self.batch_unsteered_scores) / len(self.batch_unsteered_scores)
+                avg_steered = sum(self.batch_steered_scores) / len(self.batch_steered_scores)
+                self.logger.log(f"🎯 BATCH JUDGE SCORES: Unsteered={avg_unsteered:.1f}, Steered={avg_steered:.1f} (Steered {'>' if avg_steered > avg_unsteered else '<='} Unsteered)")
+        
         self.logger.log(f"📈 🔥 GROUP COMPLETE: Avg={avg_reward:.3f}, Min={min(rewards):.3f}, Max={max(rewards):.3f} (in {elapsed_time:.1f}s)")
         return rewards
     

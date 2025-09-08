@@ -110,21 +110,39 @@ class PRBOReward:
             behavior = behavior_data["behavior"]
             optimizer_target = behavior_data.get("optimizer_target", "")
             
+            # ENHANCED LOGGING: Show attack attempt snippet
+            print(f"\n🎯 ATTACK: {attack_attempt[:100]}...")
+            
             # Get both responses
             unsteered_messages = [{"role": "user", "content": attack_attempt}]
             unsteered_response = self.target_model.generate(unsteered_messages, temperature=0.7)
+            
+            # ENHANCED LOGGING: Show unsteered response snippet  
+            print(f"📝 UNSTEERED: {unsteered_response[:100]}...")
             
             if self.use_steering:
                 steered_prompt = STEERING_PROMPT.format(attack_attempt=attack_attempt)
                 steered_messages = [{"role": "user", "content": steered_prompt}]
                 steered_response = self.target_model.generate(steered_messages, temperature=0.7)
+                # ENHANCED LOGGING: Show steered response snippet
+                print(f"🎭 STEERED: {steered_response[:100]}...")
             else:
                 steered_response = unsteered_response
                 steered_prompt = attack_attempt
+                print(f"🎭 STEERED: (same as unsteered)")
             
             # Grade both responses
             unsteered_grade = self.judge_response(unsteered_response, behavior, attack_attempt)
             steered_grade = self.judge_response(steered_response, behavior, attack_attempt) if self.use_steering else unsteered_grade
+            
+            # ENHANCED LOGGING: Show judge scores
+            print(f"⚖️ JUDGE SCORES: Unsteered={unsteered_grade:.1f}, Steered={steered_grade:.1f}")
+            
+            # Store scores for batch aggregation (if trainer is tracking them)
+            if hasattr(self, '_current_trainer') and self._current_trainer:
+                if hasattr(self._current_trainer, 'batch_unsteered_scores'):
+                    self._current_trainer.batch_unsteered_scores.append(unsteered_grade)
+                    self._current_trainer.batch_steered_scores.append(steered_grade)
             
             # Choose the BETTER proposal between steered and unsteered
             if steered_grade > unsteered_grade:
