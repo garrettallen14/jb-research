@@ -19,23 +19,24 @@ model:
   gradient_checkpointing: true
 
 training:
-  # GRPO hyperparameters optimized for 12GB GPU
-  batch_size: 1              # behaviors per training step
-  group_size: 4             # completions per behavior
-  gradient_accumulation_steps: 4  # effective batch_size = 1*4 = 4
+  # GRPO hyperparameters optimized for 32GB GPU - AGGRESSIVE SCALING
+  batch_size: 4              # behaviors per training step (4x increase)
+  group_size: 8             # completions per behavior (2x increase)
+  gradient_accumulation_steps: 2  # effective batch_size = 4*2 = 8
   
-  # Learning parameters
-  learning_rate: 3e-6
+  # Learning parameters (conservative after gradient explosion)
+  learning_rate: 1e-6        # Reduced from 3e-6 due to gradient explosion
   kl_coef: 0.01
   clip_ratio: 0.2
   max_epochs: 50
   
-  # Generation parameters  
-  max_length: 64            # reduced for speed
+  # Generation parameters (optimized for 32GB GPU)
+  max_length: 128           # tokens per attack prompt (2x increase)
   temperature: 0.8
   top_p: 0.9
   
-  # Memory management
+  # Memory and compute
+  gpu_memory_limit: "28GiB"   # Use most of 32GB GPU
   per_device_train_batch_size: 1
   dataloader_num_workers: 2
   fp16: true

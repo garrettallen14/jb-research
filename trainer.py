@@ -320,8 +320,25 @@ class MinimalGRPOTrainer:
         # SAVE MODEL STATE BEFORE OPTIMIZER STEP
         model_state_dict = {name: param.clone() for name, param in self.policy_model.model.named_parameters()}
         
-        # CRITICAL FIX: ULTRA-aggressive gradient clipping to prevent parameter corruption
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_model.model.parameters(), 0.01)  # ULTRA strict!
+        # CRITICAL FIX: EXTREME gradient clipping to prevent explosion
+        # Note: clip_grad_norm_ returns ORIGINAL norm but actually clips gradients
+        original_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_model.model.parameters(), 0.0001)  # EXTREME clipping!
+        
+        # AGGRESSIVE learning rate scaling for gradient explosion
+        if original_grad_norm > 1000.0:  # Severe explosion
+            self.logger.log(f"🚨 SEVERE gradient explosion ({original_grad_norm:.1f}) - emergency LR reduction")
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = param_group['lr'] * 0.01  # 100x reduction
+        elif original_grad_norm > 100.0:  # Major explosion
+            self.logger.log(f"⚠️ MAJOR gradients detected ({original_grad_norm:.1f}) - scaling down learning rate")
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = param_group['lr'] * 0.1  # 10x reduction
+        elif original_grad_norm > 10.0:  # Minor explosion
+            self.logger.log(f"🔴 Elevated gradients ({original_grad_norm:.1f}) - minor LR adjustment")
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = param_group['lr'] * 0.5  # 2x reduction
+        
+        grad_norm = original_grad_norm
         
         # CRITICAL FIX: Check for NaN/inf gradients before stepping
         has_nan_grad = False

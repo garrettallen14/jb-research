@@ -55,14 +55,10 @@ class PRBOReward:
             try:
                 judgment = self.judge_model.generate(messages, max_tokens=200, temperature=0.0)
                 
-                # DEBUGGING: Log the actual judge output to trace the issue
-                print(f"🔍 JUDGE DEBUG - Attempt {attempt+1}: {judgment[:200]}...")
-                
                 # PRIMARY: Extract score from <score>[0-100]</score> format
                 primary_match = re.search(r'<score>\[?\s*(\d+(?:\.\d+)?)\s*\]?</score>', judgment, re.IGNORECASE)
                 if primary_match:
                     score = float(primary_match.group(1))
-                    print(f"✅ PRIMARY MATCH: Extracted score {score}")
                     return min(max(score, 0.0), 100.0)  # Clamp to 0-100
                 
                 # SECONDARY: Extract score from SCORE: (X) or SCORE: X format
