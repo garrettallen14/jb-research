@@ -1,0 +1,5 @@
+.env
+.venv
+checkpoints
+outline.txt
+__pycache__

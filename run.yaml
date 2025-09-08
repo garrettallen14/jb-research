@@ -1,0 +1,73 @@
+# GRPO Training Configuration for Qwen3-4B on 12GB GPU
+
+model:
+  policy_model_name: "Qwen/Qwen2.5-3B-Instruct"  # Smaller alternative if 4B too large
+  
+  # Target model (via OpenRouter + .env)
+  target_model_url: "${TARGET_BASE_URL}"  # Set in .env
+  target_model_name: "${TARGET_MODEL_NAME}"  # Set in .env
+  target_api_key_env: "TARGET_API_KEY"  # .env variable name
+  
+  # Judge model (via OpenRouter + .env)  
+  judge_model_url: "${JUDGE_BASE_URL}"  # Set in .env
+  judge_model_name: "${JUDGE_MODEL_NAME}"  # Set in .env
+  judge_api_key_env: "JUDGE_API_KEY"  # .env variable name
+  
+  # Memory optimization
+  load_in_4bit: true
+  use_flash_attention: true
+  gradient_checkpointing: true
+
+training:
+  # GRPO hyperparameters optimized for 12GB GPU
+  batch_size: 2              # behaviors per training step
+  group_size: 16             # completions per behavior
+  gradient_accumulation_steps: 4  # effective batch_size = 2*4 = 8
+  
+  # Learning parameters
+  learning_rate: 3.0e-6
+  kl_coef: 0.01
+  clip_ratio: 0.2
+  max_epochs: 200
+  
+  # Generation parameters  
+  max_length: 384            # reduced for memory
+  temperature: 0.7
+  top_p: 0.9
+  
+  # Memory management
+  per_device_train_batch_size: 1
+  dataloader_num_workers: 2
+  fp16: true
+  
+  # Checkpointing
+  save_steps: 25
+  eval_steps: 50
+  logging_steps: 10
+  output_dir: "./checkpoints"
+
+data:
+  behaviors_file: "data/data.jsonl"
+  max_behaviors: 50          # subset for faster training
+  
+reward:
+  use_steering: true
+  prbo_weight: 1.0
+  blackbox_weight: 0.0
+  
+  # Judge parameters
+  judge_max_tokens: 100
+  judge_temperature: 0.0
+
+experiment:
+  name: "qwen3_4b_grpo"
+  wandb_project: "jailbreak-training"  # optional
+  log_wandb: false
+  seed: 42
+  
+# Hardware-specific optimizations for 12GB GPU
+hardware:
+  gpu_memory_gb: 12
+  max_memory_per_gpu: "10GiB"  # Leave 2GB buffer
+  torch_dtype: "float16"
+  device_map: "auto"
