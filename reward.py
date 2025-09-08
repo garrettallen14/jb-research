@@ -62,11 +62,16 @@ class PRBOReward:
         except:
             return 5.0  # Default on error
     
-    def compute_reward(self, attack_attempt: str, behavior: str) -> float:
+    def compute_reward(self, attack_attempt: str, behavior_data: Dict[str, str]) -> float:
         """
         Compute PRBO reward following the outline.txt logic exactly.
+        Accepts full behavior_data dict with optimizer_target field.
         """
         try:
+            # CRITICAL FIX: Extract behavior string from behavior_data
+            behavior = behavior_data["behavior"]
+            optimizer_target = behavior_data.get("optimizer_target", "")
+            
             # Get both responses
             unsteered_messages = [{"role": "user", "content": attack_attempt}]
             unsteered_response = self.target_model.generate(unsteered_messages, temperature=0.7)

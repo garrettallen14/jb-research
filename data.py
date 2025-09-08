@@ -4,15 +4,18 @@ import random
 
 
 def load_behaviors(file_path: str = "data/data.jsonl") -> List[Dict[str, str]]:
-    """Load behaviors from JSONL file, returning only behavior_id and behavior fields."""
+    """Load behaviors from JSONL file, including ALL fields needed for PRBO."""
     behaviors = []
     
     with open(file_path, 'r') as f:
         for line in f:
             data = json.loads(line.strip())
+            # CRITICAL FIX: Include optimizer_target for PRBO reward computation
             behaviors.append({
                 "behavior_id": data["behavior_id"],
-                "behavior": data["behavior"]
+                "behavior": data["behavior"],
+                "optimizer_target": data["optimizer_target"],
+                "category": data.get("category", "unknown")
             })
     
     return behaviors
