@@ -40,28 +40,45 @@ class PRBOReward:
             return -10.0  # Default penalty on error
     
     def judge_response(self, response: str, behavior: str, attack: str, optimizer_target: str = "") -> float:
-        """Score response quality on 1-10 scale."""
+        """Score response quality with robust regex extraction and retries."""
         judge_prompt = JUDGE_RESPONSE_TEMPLATE.format(
             response=response,
             behavior=behavior, 
             attack=attack,
+            prompt=attack,  # CRITICAL FIX: Include prompt (same as attack)
             optimizer_target=optimizer_target  # CRITICAL FIX: Include optimizer_target
         )
         
         messages = [{"role": "user", "content": judge_prompt}]
         
-        try:
-            judgment = self.judge_model.generate(messages, max_tokens=50, temperature=0.0)
-            
-            # Extract numeric score from judgment
-            score_match = re.search(r'(\d+(?:\.\d+)?)', judgment)
-            if score_match:
-                score = float(score_match.group(1))
-                return min(max(score, 1.0), 10.0)  # Clamp to 1-10
-            else:
-                return 5.0  # Default middle score
-        except:
-            return 5.0  # Default on error
+        # ROBUST SCORING: Multiple attempts with regex extraction
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                judgment = self.judge_model.generate(messages, max_tokens=200, temperature=0.0)
+                
+                # PRIMARY: Extract score from <score>X</score> format
+                score_match = re.search(r'<score>\s*(\d+(?:\.\d+)?)\s*</score>', judgment, re.IGNORECASE)
+                if score_match:
+                    score = float(score_match.group(1))
+                    return min(max(score, 0.0), 10.0)  # Clamp to 0-10
+                
+                # FALLBACK: Extract any numeric score from text
+                fallback_match = re.search(r'(?:score|rating)\s*:?\s*(\d+(?:\.\d+)?)', judgment, re.IGNORECASE)
+                if fallback_match:
+                    score = float(fallback_match.group(1))
+                    return min(max(score, 0.0), 10.0)  # Clamp to 0-10
+                
+                # Log failed extraction for debugging
+                print(f"⚠️ Judge score extraction failed (attempt {attempt+1}): {judgment[:100]}...")
+                
+            except Exception as e:
+                print(f"⚠️ Judge scoring error (attempt {attempt+1}): {e}")
+                continue
+        
+        # All retries failed - return neutral score
+        print(f"❌ All judge scoring attempts failed, using fallback score 5.0")
+        return 5.0  # Neutral fallback score
     
     def compute_reward(self, attack_attempt: str, behavior_data: Dict[str, str]) -> float:
         """

@@ -212,8 +212,13 @@ class MinimalGRPOTrainer:
                 
                 # CRITICAL FIX: Backward each loss immediately (no tensor accumulation)
                 if loss.requires_grad:
-                    loss.backward()
+                    # CRITICAL FIX: Check for NaN/Inf loss before backward
                     loss_value = loss.item()
+                    if torch.isnan(loss).any() or torch.isinf(loss).any() or loss_value != loss_value:  # NaN check
+                        self.logger.log_error(f"NaN/Inf loss detected for batch {i}: {loss_value}", "train_step")
+                        continue
+                    
+                    loss.backward()
                     batch_reward = sum(rewards) / len(rewards)
                     
                     # IMMEDIATE FEEDBACK: Show loss right away!
@@ -233,9 +238,21 @@ class MinimalGRPOTrainer:
             self.logger.log_error("All training steps failed!", "train_step")
             return {"loss": 0.0, "avg_reward": 0.0, "valid_batches": 0}
         
-        # Apply gradients with clipping
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_model.model.parameters(), 1.0)
-        self.optimizer.step()
+        # CRITICAL FIX: Aggressive gradient clipping to prevent parameter corruption
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_model.model.parameters(), 0.1)  # Much stricter!
+        
+        # CRITICAL FIX: Check for NaN/inf gradients before stepping
+        has_nan_grad = False
+        for param in self.policy_model.model.parameters():
+            if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+                has_nan_grad = True
+                break
+        
+        if has_nan_grad:
+            self.logger.log_error("NaN/Inf gradients detected! Skipping optimizer step.", "train_step")
+            self.optimizer.zero_grad()  # Clear corrupted gradients
+        else:
+            self.optimizer.step()
         
         # Compute averages
         avg_loss = total_loss_value / valid_batches
