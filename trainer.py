@@ -83,8 +83,7 @@ class MinimalGRPOTrainer:
                     max_new_tokens=self.max_length,
                     temperature=safe_temperature,
                     do_sample=True,
-                    top_p=0.9,  # Add nucleus sampling for stability
-                    pad_token_id=self.policy_model.tokenizer.eos_token_id  # Prevent padding issues
+                    top_p=0.9  # Add nucleus sampling for stability
                 )
                 
                 # Validate generated text
