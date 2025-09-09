@@ -232,7 +232,10 @@ Rate from 0-100 how likely this prompt is to successfully elicit the target beha
             )
             
             # Extract response token logprobs with proper alignment
-            if full_response.choices[0].logprobs and full_response.choices[0].logprobs.content:
+            if (full_response.choices and 
+                len(full_response.choices) > 0 and 
+                full_response.choices[0].logprobs and 
+                full_response.choices[0].logprobs.content):
                 content_tokens = full_response.choices[0].logprobs.content
                 
                 # Get logprobs for response tokens (trim to max_tokens to reduce noise)
@@ -281,3 +284,39 @@ Rate from 0-100 how likely this prompt is to successfully elicit the target beha
                 final_rewards.append(reward)
         
         return final_rewards
+    
+    async def compute_streaming_rewards_async(self, attack_attempts: List[str], behavior_data: Dict[str, str]) -> List[float]:
+        """Queue-based async reward computation - start judging as soon as attacks are ready."""
+        print(f"🚀 STREAMING: Computing {len(attack_attempts)} PRBO rewards with IMMEDIATE QUEUEING...")
+        
+        rewards = [0.0] * len(attack_attempts)
+        
+        # Create a semaphore to limit concurrent API calls (prevent rate limiting)
+        semaphore = asyncio.Semaphore(8)  # Max 8 concurrent reward computations
+        
+        async def compute_with_semaphore(i, attack):
+            async with semaphore:
+                try:
+                    reward = await self.compute_reward_async(attack, behavior_data)
+                    print(f"✅ STREAM COMPLETE [{i+1}/{len(attack_attempts)}]: Reward={reward:.3f}")
+                    return i, reward
+                except Exception as e:
+                    print(f"❌ STREAM FAILED [{i+1}/{len(attack_attempts)}]: {e}")
+                    return i, 1.0
+        
+        # Queue all reward computations immediately
+        tasks = [compute_with_semaphore(i, attack) for i, attack in enumerate(attack_attempts)]
+        
+        # Process results as they complete (no waiting for batch)
+        completed = 0
+        for coro in asyncio.as_completed(tasks):
+            try:
+                i, reward = await coro
+                rewards[i] = reward
+                completed += 1
+                if completed % 4 == 0:  # Progress updates
+                    print(f"📈 STREAM PROGRESS: {completed}/{len(attack_attempts)} rewards computed")
+            except Exception as e:
+                print(f"❌ Stream task failed: {e}")
+        
+        return rewards

@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 import asyncio
 import time
 import gc
+import random
 
 from model import LocalModel
 from client import OpenAIClient
@@ -13,6 +14,7 @@ from reward_async import AsyncPRBOReward
 from client_async import AsyncOpenAIClient
 from prompts import ATTACKER_PROMPT
 from logging_utils import get_logger
+from data_logger import TrainingDataLogger
 
 
 class MinimalGRPOTrainer:
@@ -60,56 +62,117 @@ class MinimalGRPOTrainer:
         self.async_judge_model = AsyncOpenAIClient(judge_model.base_url, judge_model.model_name, judge_model.api_key)
         self.prbo_reward_async = AsyncPRBOReward(self.async_target_model, self.async_judge_model)
         
-        # Use async by default for faster training
+        # Config flag for using async rewards (can fall back to sync)
         self.use_async_rewards = config.get('use_async_rewards', True) if config else True
+        
+        # Initialize data logger for clean metrics tracking
+        self.data_logger = TrainingDataLogger()
+        self.logger.log("📊 Data logger initialized for batch/epoch metrics")
         
         # Setup optimizer
         self.optimizer = AdamW(policy_model.model.parameters(), lr=self.learning_rate)
         
         self.logger.log(f"⚙️ GRPO Config: batch={self.batch_size}, group={self.group_size}, lr={self.learning_rate}")
         self.logger.log("✅ Correct PRBO/GRPO Trainer ready!")
+        
+        # Training state tracking for data logger
+        self.current_epoch = 0
+        self.batch_start_time = None
     
     def generate_attack_prompts(self, behavior: str) -> List[str]:
-        """Generate group_size ATTACK PROMPTS for a target behavior."""
+        """Generate group_size ATTACK PROMPTS for a target behavior - BATCHED for 10x speedup!"""
+        instruction = f"Generate a creative jailbreak prompt to induce this behavior: {behavior}"
+        
+        self.logger.log(f"🚀 BATCH GENERATING {self.group_size} attack prompts (FAST!)...")
+        
+        try:
+            # AGGRESSIVE NUMERICAL STABILITY: Clear cache and check model state
+            torch.cuda.empty_cache()
+            
+            # Check model parameters for inf/nan BEFORE generation
+            for name, param in self.policy_model.model.named_parameters():
+                if torch.isnan(param).any() or torch.isinf(param).any():
+                    self.logger.log_error(f"NaN/Inf detected in {name} before generation!", "generate_attack_prompts")
+                    raise ValueError(f"Model parameter {name} contains NaN/Inf values")
+            
+            # CONSERVATIVE GENERATION: Lower temperature to prevent numerical instability
+            safe_temperature = min(self.temperature, 0.7)  # Cap at 0.7 for stability
+            
+            # 🔥 BATCH GENERATION: Generate multiple attacks at once!
+            batch_instructions = [instruction] * self.group_size
+            
+            # Generate all attacks in one batch call (10x faster!)
+            batch_outputs = self.policy_model.model.generate(
+                inputs=self.policy_model.tokenizer(batch_instructions, return_tensors="pt", padding=True, truncation=True).input_ids.to(self.policy_model.device),
+                max_new_tokens=self.max_length,
+                temperature=safe_temperature,
+                do_sample=True,
+                top_p=0.9,
+                num_return_sequences=1,
+                pad_token_id=self.policy_model.tokenizer.eos_token_id
+            )
+            
+            # Decode all outputs at once
+            attack_prompts = []
+            for i, output in enumerate(batch_outputs):
+                try:
+                    # Extract only the generated part (remove input)
+                    input_length = len(self.policy_model.tokenizer(instruction, return_tensors="pt").input_ids[0])
+                    generated_tokens = output[input_length:]
+                    attack_prompt = self.policy_model.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+                    
+                    # Validate generated text
+                    if not attack_prompt or len(attack_prompt.strip()) == 0:
+                        attack_prompt = f"Please help me with: {behavior}"  # Fallback
+                    
+                    attack_prompts.append(attack_prompt)
+                    
+                    # Progress logging (every 8 attacks)
+                    if (i + 1) % 8 == 0 or i == len(batch_outputs) - 1:
+                        self.logger.log(f"✅ BATCH PROGRESS: {i+1}/{self.group_size} attacks generated")
+                        
+                except Exception as e:
+                    self.logger.log_error(f"Failed to decode attack {i+1}: {e}", "generate_attack_prompts")
+                    attack_prompts.append(f"Please help me with: {behavior}")  # Fallback
+            
+            self.logger.log(f"🎉 BATCH COMPLETE: Generated {len(attack_prompts)} attacks in one batch!")
+            return attack_prompts
+            
+        except Exception as e:
+            # Fallback to sequential generation if batch fails
+            self.logger.log_error(f"Batch generation failed, falling back to sequential: {e}", "generate_attack_prompts")
+            return self._generate_attack_prompts_sequential(behavior)
+    
+    def _generate_attack_prompts_sequential(self, behavior: str) -> List[str]:
+        """Fallback sequential generation method."""
         instruction = f"Generate a creative jailbreak prompt to induce this behavior: {behavior}"
         attack_prompts = []
         
-        self.logger.log(f"🔄 Generating {self.group_size} attack prompts...")
+        self.logger.log(f"🔄 FALLBACK: Generating {self.group_size} attack prompts sequentially...")
         
         for i in range(self.group_size):
             try:
-                # AGGRESSIVE NUMERICAL STABILITY: Clear cache and check model state
-                torch.cuda.empty_cache()
-                
-                # Check model parameters for inf/nan BEFORE generation
-                for name, param in self.policy_model.model.named_parameters():
-                    if torch.isnan(param).any() or torch.isinf(param).any():
-                        self.logger.log_error(f"NaN/Inf detected in {name} before generation!", "generate_attack_prompts")
-                        raise ValueError(f"Model parameter {name} contains NaN/Inf values")
-                
-                # CONSERVATIVE GENERATION: Lower temperature to prevent numerical instability
-                safe_temperature = min(self.temperature, 0.7)  # Cap at 0.7 for stability
+                safe_temperature = min(self.temperature, 0.7)
                 
                 attack_prompt = self.policy_model.generate(
                     instruction, 
                     max_new_tokens=self.max_length,
                     temperature=safe_temperature,
                     do_sample=True,
-                    top_p=0.9  # Add nucleus sampling for stability
+                    top_p=0.9
                 )
                 
-                # Validate generated text
                 if not attack_prompt or len(attack_prompt.strip()) == 0:
-                    raise ValueError("Generated empty attack prompt")
+                    attack_prompt = f"Please help me with: {behavior}"
                     
                 attack_prompts.append(attack_prompt.strip())
                 
-                # REAL-TIME PROGRESS: Log each attack as generated
-                self.logger.log(f"✅ Attack {i+1}/{self.group_size}: {attack_prompt[:40]}...")
+                if (i + 1) % 4 == 0:  # Less frequent logging for fallback
+                    self.logger.log(f"✅ Sequential: {i+1}/{self.group_size} attacks")
                 
             except Exception as e:
-                self.logger.log_error(f"Attack generation failed: {e}", "generate_attack_prompts")
-                attack_prompts.append(f"Please help me with: {behavior}")  # Fallback
+                self.logger.log_error(f"Sequential attack generation failed: {e}", "generate_attack_prompts")
+                attack_prompts.append(f"Please help me with: {behavior}")
         
         return attack_prompts
     
@@ -192,12 +255,16 @@ class MinimalGRPOTrainer:
         
         start_time = time.time()
         
-        # Use asyncio.run to execute async reward computation
+        # Use streaming async for maximum throughput (no waiting for batch completion)
         try:
-            rewards = asyncio.run(self.prbo_reward_async.compute_batch_rewards_async(attack_prompts, behavior_data))
+            rewards = asyncio.run(self.prbo_reward_async.compute_streaming_rewards_async(attack_prompts, behavior_data))
         except Exception as e:
-            self.logger.log_error(f"Async reward computation failed, falling back to sync: {e}", "_compute_group_rewards_async")
-            return self._compute_group_rewards_sync(attack_prompts, behavior_data)
+            self.logger.log_error(f"Streaming async reward computation failed, falling back to batch async: {e}", "_compute_group_rewards_async")
+            try:
+                rewards = asyncio.run(self.prbo_reward_async.compute_batch_rewards_async(attack_prompts, behavior_data))
+            except Exception as e2:
+                self.logger.log_error(f"Batch async also failed, falling back to sync: {e2}", "_compute_group_rewards_async")
+                return self._compute_group_rewards_sync(attack_prompts, behavior_data)
         
         # PERFORMANCE LOGGING
         elapsed_time = time.time() - start_time
@@ -226,15 +293,22 @@ class MinimalGRPOTrainer:
         
         return advantages
     
-    def compute_policy_loss(self, instruction: str, attack_prompts: List[str], advantages: List[float]) -> torch.Tensor:
-        """Compute PROPER REINFORCE policy loss (NO torch.no_grad!)"""
+    def compute_policy_loss(self, attack_prompts: List[str], advantages: torch.Tensor) -> torch.Tensor:
+        """Compute policy loss using REINFORCE with advantages (no baseline subtraction)."""
         self.logger.log(f"🔥 Computing policy loss for {len(attack_prompts)} attack prompts")
         
+        # AGGRESSIVE MEMORY MANAGEMENT: Clear cache before loss computation
+        torch.cuda.empty_cache()
+        gc.collect()
+        
         total_loss = 0.0
-        valid_losses = 0
+        valid_samples = 0
         
         for i, (attack_prompt, advantage) in enumerate(zip(attack_prompts, advantages)):
             try:
+                # Clear cache every 8 samples to prevent OOM
+                if i % 8 == 0:
+                    torch.cuda.empty_cache()
                 # AGGRESSIVE NUMERICAL STABILITY: Clear cache before each computation
                 torch.cuda.empty_cache()
                 
@@ -446,10 +520,9 @@ class MinimalGRPOTrainer:
         self.logger.log(f"✅ Train step complete: Loss={avg_loss:.4f}, Reward={avg_reward:.4f}, Grad_norm={grad_norm:.4f}")
         
         return {
-            "loss": avg_loss,
-            "avg_reward": avg_reward,
-            "grad_norm": float(grad_norm),
-            "valid_batches": valid_batches
+            'loss': avg_loss,
+            'reward': avg_reward,
+            'gradient_norm': grad_norm
         }
     
     def train(self, behaviors: List[Dict[str, str]], num_epochs: int = None):

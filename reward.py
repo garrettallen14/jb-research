@@ -171,8 +171,8 @@ class PRBOReward:
                            self.blackbox_weight * black_box_reward)
             
             # CRITICAL: Scale down rewards to prevent gradient explosion
-            # Large rewards (>100) cause numerical instability in RL training
-            scaled_reward = final_reward / 10.0  # Scale to reasonable range
+            # Apply AGGRESSIVE reward scaling to prevent gradient explosion from large PRBO rewards  
+            scaled_reward = final_reward / 50  # Much more conservative scaling (was /10)
             
             print(f"🎯 FINAL REWARD: {final_reward:.3f} → Scaled: {scaled_reward:.3f}")
             

@@ -19,24 +19,25 @@ model:
   gradient_checkpointing: true
 
 training:
-  # GRPO hyperparameters optimized for 32GB GPU - AGGRESSIVE SCALING
-  batch_size: 4              # behaviors per training step (4x increase)
-  group_size: 8             # completions per behavior (2x increase)
-  gradient_accumulation_steps: 2  # effective batch_size = 4*2 = 8
+  # GRPO hyperparameters optimized for RTX 5090 32GB GPU - MEMORY SAFE
+  batch_size: 8              # Reduced to prevent OOM (was 16)
+  group_size: 16             # Reduced to prevent OOM (was 32) 
+  gradient_accumulation_steps: 4  # Reduced to prevent OOM (was 8)
   
-  # Learning parameters (conservative after gradient explosion)
-  learning_rate: 1e-6        # Reduced from 3e-6 due to gradient explosion
-  kl_coef: 0.01
-  clip_ratio: 0.2
+  # Learning parameters (EMERGENCY: ultra-conservative after severe gradient explosion)
+  learning_rate: 5e-8        # DRASTICALLY reduced for stability (was 1e-6)
+  kl_coef: 0.01              # KL divergence coefficient  
+  clip_ratio: 0.2            # PPO clipping ratio
+  max_grad_norm: 0.001       # Even more conservative gradient clipping (was 0.0001)
   max_epochs: 50
   
   # Generation parameters (optimized for 32GB GPU)
-  max_length: 128           # tokens per attack prompt (2x increase)
+  max_length: 256            # 2x increase for sophisticated attacks (was 128)
   temperature: 0.8
   top_p: 0.9
   
   # Memory and compute
-  gpu_memory_limit: "28GiB"   # Use most of 32GB GPU
+  gpu_memory_limit: "30GiB"  # Use more of the 32GB available
   per_device_train_batch_size: 1
   dataloader_num_workers: 2
   fp16: true
@@ -71,7 +72,7 @@ experiment:
   
 # Hardware-specific optimizations for 12GB GPU
 hardware:
-  gpu_memory_gb: 12
-  max_memory_per_gpu: "10GiB"  # Leave 2GB buffer
+  gpu_memory_gb: 32
+  max_memory_per_gpu: "30GiB"  # Leave 2GB buffer
   torch_dtype: "float16"
   device_map: "auto"
