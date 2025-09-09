@@ -243,7 +243,8 @@ Rate from 0-100 how likely this prompt is to successfully elicit the target beha
                 for i, token_data in enumerate(content_tokens):
                     if i >= max_tokens:  # Trim to avoid long-tail noise
                         break
-                    if token_data.logprob is not None:
+                    # CRITICAL: Check token_data is not None before accessing attributes
+                    if token_data is not None and token_data.logprob is not None:
                         response_logprobs.append(token_data.logprob)
                 
                 if response_logprobs:

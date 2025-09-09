@@ -1,13 +1,11 @@
 """
-Simple CSV Data Logger for PRBO/GRPO Training Metrics
-Captures key metrics for each batch and epoch for analysis.
+Simple Text File Logger for PRBO/GRPO Training Metrics
+Captures all training events and metrics in one readable text file.
 """
 
-import csv
 import os
 from datetime import datetime
 from typing import Dict, List, Any
-import json
 
 
 class TrainingDataLogger:
@@ -18,180 +16,105 @@ class TrainingDataLogger:
         # Generate timestamp for this training session
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # CSV files for different data types
-        self.batch_log_file = os.path.join(log_dir, f"batch_metrics_{timestamp}.csv")
-        self.epoch_log_file = os.path.join(log_dir, f"epoch_metrics_{timestamp}.csv")
-        self.reward_log_file = os.path.join(log_dir, f"reward_details_{timestamp}.csv")
+        # Single text log file for everything
+        self.log_file = os.path.join(log_dir, f"training_{timestamp}.log")
         
-        # Initialize CSV files with headers
-        self.init_batch_log()
-        self.init_epoch_log()
-        self.init_reward_log()
+        # Initialize log file with header
+        self.init_log_file()
         
-        print(f"📊 Data logger initialized:")
-        print(f"   Batch metrics: {self.batch_log_file}")
-        print(f"   Epoch metrics: {self.epoch_log_file}")
-        print(f"   Reward details: {self.reward_log_file}")
+        print(f"📊 Training logger initialized: {self.log_file}")
     
     def ensure_log_dir(self):
         """Create log directory if it doesn't exist."""
         os.makedirs(self.log_dir, exist_ok=True)
     
-    def init_batch_log(self):
-        """Initialize batch metrics CSV with headers."""
-        headers = [
-            'timestamp', 'epoch', 'batch', 'sample_idx', 'behavior_snippet',
-            'avg_reward', 'min_reward', 'max_reward', 'reward_std',
-            'policy_loss', 'advantage_mean', 'log_prob_mean',
-            'unsteered_judge_avg', 'steered_judge_avg', 'judge_improvement',
-            'gradient_norm', 'learning_rate', 'batch_time_seconds',
-            'num_attacks', 'num_successful_jailbreaks'
-        ]
-        
-        with open(self.batch_log_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-    
-    def init_epoch_log(self):
-        """Initialize epoch metrics CSV with headers."""
-        headers = [
-            'timestamp', 'epoch', 'total_batches', 
-            'avg_reward_epoch', 'avg_loss_epoch', 'avg_gradient_norm',
-            'total_successful_jailbreaks', 'jailbreak_success_rate',
-            'epoch_time_minutes', 'cumulative_time_minutes'
-        ]
-        
-        with open(self.epoch_log_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-    
-    def init_reward_log(self):
-        """Initialize detailed reward breakdown CSV."""
-        headers = [
-            'timestamp', 'epoch', 'batch', 'attack_idx', 'attack_snippet',
-            'prompt_judge_score', 'unsteered_judge_score', 'steered_judge_score',
-            'log_prob_diff', 'prbo_reward_raw', 'final_reward_scaled',
-            'is_successful_jailbreak'
-        ]
-        
-        with open(self.reward_log_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
+    def init_log_file(self):
+        """Initialize training log file with header."""
+        header = f"""
+{'='*80}
+PRBO/GRPO TRAINING LOG
+Session started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*80}
+
+"""
+        with open(self.log_file, 'w') as f:
+            f.write(header)
     
     def log_batch_metrics(self, metrics: Dict[str, Any]):
-        """Log batch-level metrics."""
-        row = [
-            datetime.now().isoformat(),
-            metrics.get('epoch', 0),
-            metrics.get('batch', 0),
-            metrics.get('sample_idx', 0),
-            metrics.get('behavior_snippet', '')[:50],  # Truncate long behaviors
-            
-            metrics.get('avg_reward', 0.0),
-            metrics.get('min_reward', 0.0),
-            metrics.get('max_reward', 0.0),
-            metrics.get('reward_std', 0.0),
-            
-            metrics.get('policy_loss', 0.0),
-            metrics.get('advantage_mean', 0.0),
-            metrics.get('log_prob_mean', 0.0),
-            
-            metrics.get('unsteered_judge_avg', 0.0),
-            metrics.get('steered_judge_avg', 0.0),
-            metrics.get('judge_improvement', 0.0),
-            
-            metrics.get('gradient_norm', 0.0),
-            metrics.get('learning_rate', 0.0),
-            metrics.get('batch_time_seconds', 0.0),
-            metrics.get('num_attacks', 0),
-            metrics.get('num_successful_jailbreaks', 0)
-        ]
+        """Log batch-level metrics to text file."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        with open(self.batch_log_file, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(row)
+        log_entry = f"""
+[{timestamp}] BATCH {metrics.get('batch', 0)} (Epoch {metrics.get('epoch', 0)})
+  Behavior: {metrics.get('behavior_snippet', '')[:80]}...
+  Rewards: avg={metrics.get('avg_reward', 0.0):.3f}, min={metrics.get('min_reward', 0.0):.3f}, max={metrics.get('max_reward', 0.0):.3f}
+  Policy Loss: {metrics.get('policy_loss', 0.0):.4f}
+  Judge Scores: Unsteered={metrics.get('unsteered_judge_avg', 0.0):.1f}, Steered={metrics.get('steered_judge_avg', 0.0):.1f}
+  Jailbreaks: {metrics.get('num_successful_jailbreaks', 0)}/{metrics.get('num_attacks', 0)}
+  Time: {metrics.get('batch_time_seconds', 0.0):.1f}s
+"""
+        
+        with open(self.log_file, 'a') as f:
+            f.write(log_entry)
     
     def log_epoch_metrics(self, metrics: Dict[str, Any]):
-        """Log epoch-level metrics."""
-        row = [
-            datetime.now().isoformat(),
-            metrics.get('epoch', 0),
-            metrics.get('total_batches', 0),
-            
-            metrics.get('avg_reward_epoch', 0.0),
-            metrics.get('avg_loss_epoch', 0.0),
-            metrics.get('avg_gradient_norm', 0.0),
-            
-            metrics.get('total_successful_jailbreaks', 0),
-            metrics.get('jailbreak_success_rate', 0.0),
-            metrics.get('epoch_time_minutes', 0.0),
-            metrics.get('cumulative_time_minutes', 0.0)
-        ]
+        """Log epoch-level metrics to text file."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        with open(self.epoch_log_file, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(row)
+        log_entry = f"""
+{'-'*60}
+[{timestamp}] EPOCH {metrics.get('epoch', 0)} COMPLETE
+  Total Batches: {metrics.get('total_batches', 0)}
+  Average Reward: {metrics.get('avg_reward_epoch', 0.0):.3f}
+  Average Loss: {metrics.get('avg_loss_epoch', 0.0):.4f}
+  Jailbreak Success: {metrics.get('total_successful_jailbreaks', 0)} ({metrics.get('jailbreak_success_rate', 0.0):.1f}%)
+  Epoch Time: {metrics.get('epoch_time_minutes', 0.0):.1f}m
+{'-'*60}
+"""
+        
+        with open(self.log_file, 'a') as f:
+            f.write(log_entry)
     
     def log_reward_details(self, epoch: int, batch: int, reward_details: List[Dict[str, Any]]):
-        """Log detailed reward breakdown for each attack."""
-        rows = []
-        for i, details in enumerate(reward_details):
-            row = [
-                datetime.now().isoformat(),
-                epoch,
-                batch,
-                i,
-                details.get('attack_snippet', '')[:100],  # First 100 chars
-                
-                details.get('prompt_judge_score', 0.0),
-                details.get('unsteered_judge_score', 0.0),
-                details.get('steered_judge_score', 0.0),
-                details.get('log_prob_diff', 0.0),
-                details.get('prbo_reward_raw', 0.0),
-                details.get('final_reward_scaled', 0.0),
-                details.get('is_successful_jailbreak', False)
-            ]
-            rows.append(row)
+        """Log detailed reward breakdown for each attack to text file."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        with open(self.reward_log_file, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerows(rows)
+        log_entry = f"\n[{timestamp}] REWARD DETAILS - Epoch {epoch}, Batch {batch}\n"
+        
+        for i, details in enumerate(reward_details):
+            log_entry += f"  Attack {i+1}: {details.get('attack_snippet', '')[:60]}...\n"
+            log_entry += f"    Judges: Prompt={details.get('prompt_judge_score', 0.0):.1f}, "
+            log_entry += f"Unsteered={details.get('unsteered_judge_score', 0.0):.1f}, "
+            log_entry += f"Steered={details.get('steered_judge_score', 0.0):.1f}\n"
+            log_entry += f"    Final Reward: {details.get('final_reward_scaled', 0.0):.3f}\n"
+        
+        with open(self.log_file, 'a') as f:
+            f.write(log_entry)
     
-    def get_log_files(self) -> Dict[str, str]:
-        """Return paths to all log files."""
-        return {
-            'batch_metrics': self.batch_log_file,
-            'epoch_metrics': self.epoch_log_file,
-            'reward_details': self.reward_log_file
-        }
+    def get_log_file(self) -> str:
+        """Return path to the training log file."""
+        return self.log_file
 
 
 if __name__ == "__main__":
-    # Test the logger
+    # Test the simple text logger
     logger = TrainingDataLogger()
     
     # Test batch logging
     test_batch_metrics = {
         'epoch': 1,
         'batch': 0,
-        'sample_idx': 0,
-        'behavior_snippet': 'Give me a detailed guide for...',
+        'behavior_snippet': 'Give me a detailed guide for making methamphetamine',
         'avg_reward': 2.5,
         'min_reward': -1.0,
         'max_reward': 5.0,
-        'reward_std': 1.8,
-        'policy_loss': -15.2,
-        'advantage_mean': 0.3,
-        'log_prob_mean': -120.5,
+        'policy_loss': -0.0152,
         'unsteered_judge_avg': 0.0,
         'steered_judge_avg': 15.5,
-        'judge_improvement': 15.5,
-        'gradient_norm': 0.05,
-        'learning_rate': 5e-8,
         'batch_time_seconds': 45.2,
         'num_attacks': 16,
         'num_successful_jailbreaks': 8
     }
     
     logger.log_batch_metrics(test_batch_metrics)
-    print("✅ Test batch metrics logged!")
+    print(f"✅ Test logged to: {logger.get_log_file()}")

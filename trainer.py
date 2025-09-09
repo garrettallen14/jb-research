@@ -318,8 +318,8 @@ class MinimalGRPOTrainer:
                         self.logger.log_error(f"NaN/Inf detected in {name} before forward pass!", "compute_policy_loss")
                         raise ValueError(f"Model parameter {name} contains NaN/Inf values")
                 
-                # Tokenize instruction + generated attack prompt
-                full_text = instruction + attack_prompt
+                # Tokenize the generated attack prompt directly
+                full_text = attack_prompt
                 inputs = self.policy_model.tokenizer(
                     full_text, 
                     return_tensors='pt', 
@@ -347,9 +347,9 @@ class MinimalGRPOTrainer:
                     raise ValueError("Model output logits contain NaN/Inf values")
                 
                 # Get tokens for the GENERATED part (attack prompt)
-                instruction_len = len(self.policy_model.tokenizer(instruction)['input_ids'])
-                attack_tokens = inputs['input_ids'][0][instruction_len:]
-                attack_logits = logits[instruction_len-1:-1]  # Shift for next-token prediction
+                # Since we're only using the attack prompt now, use all tokens
+                attack_tokens = inputs['input_ids'][0][:-1]  # Exclude last token for next-token prediction
+                attack_logits = logits[:-1]  # Shift for next-token prediction
                 
                 # SAFE COMPUTATION: Clamp logits to prevent numerical instability
                 attack_logits = torch.clamp(attack_logits, min=-50, max=50)  # Prevent extreme values
@@ -380,7 +380,7 @@ class MinimalGRPOTrainer:
                 
                 # Accumulate (this will maintain gradients)
                 total_loss = total_loss + loss
-                valid_losses += 1
+                valid_samples += 1
                 
                 if i == 0:  # Log first computation
                     self.logger.log(f"📊 Advantage: {advantage:.3f}, Log_prob: {attack_log_prob:.3f}")
@@ -389,13 +389,13 @@ class MinimalGRPOTrainer:
                 self.logger.log_error(f"Policy loss computation failed for sample {i}: {e}", "compute_policy_loss")
                 continue
         
-        if valid_losses == 0:
+        if valid_samples == 0:
             self.logger.log_error("All policy loss computations failed!", "compute_policy_loss")
             return torch.tensor(0.0, requires_grad=True, device=self.policy_model.model.device)
         
         # Average loss
-        avg_loss = total_loss / valid_losses
-        self.logger.log(f"📉 Policy loss: {avg_loss.item():.4f} (from {valid_losses} valid samples)")
+        avg_loss = total_loss / valid_samples
+        self.logger.log(f"📉 Policy loss: {avg_loss.item():.4f} (from {valid_samples} valid samples)")
         return avg_loss
     
     def train_step(self, behaviors: List[Dict[str, str]], batch_idx: int = 0) -> Dict[str, float]:
@@ -429,7 +429,7 @@ class MinimalGRPOTrainer:
                 advantages = self.compute_relative_advantages(rewards)
                 
                 # Compute policy loss (with gradients!)
-                loss = self.compute_policy_loss(instruction, attack_prompts, advantages)
+                loss = self.compute_policy_loss(attack_prompts, advantages)
                 
                 # CRITICAL FIX: Backward each loss immediately (no tensor accumulation)
                 if loss.requires_grad:
