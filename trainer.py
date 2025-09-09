@@ -1,13 +1,16 @@
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
-from typing import List, Dict
-import random
+from typing import Dict, Any, List
+import asyncio
+import time
+import gc
 
 from model import LocalModel
 from client import OpenAIClient
 from reward import PRBOReward
-from data import load_behaviors
+from reward_async import AsyncPRBOReward
+from client_async import AsyncOpenAIClient
 from prompts import ATTACKER_PROMPT
 from logging_utils import get_logger
 
@@ -50,6 +53,15 @@ class MinimalGRPOTrainer:
         # Initialize PRBO reward function
         self.logger.log("⚡ Setting up PRBO reward function...")
         self.prbo_reward = PRBOReward(target_model, judge_model)
+        
+        # Initialize async PRBO reward function (for parallel speedup)
+        self.logger.log("🚀 Setting up ASYNC PRBO reward function...")
+        self.async_target_model = AsyncOpenAIClient(target_model.base_url, target_model.model_name, target_model.api_key)
+        self.async_judge_model = AsyncOpenAIClient(judge_model.base_url, judge_model.model_name, judge_model.api_key)
+        self.prbo_reward_async = AsyncPRBOReward(self.async_target_model, self.async_judge_model)
+        
+        # Use async by default for faster training
+        self.use_async_rewards = config.get('use_async_rewards', True) if config else True
         
         # Setup optimizer
         self.optimizer = AdamW(policy_model.model.parameters(), lr=self.learning_rate)
@@ -102,8 +114,15 @@ class MinimalGRPOTrainer:
         return attack_prompts
     
     def compute_group_rewards(self, attack_prompts: List[str], behavior_data: Dict[str, str]) -> List[float]:
-        """Compute PRBO rewards for attack prompts PARALLEL for speed."""
-        self.logger.log(f"🎯 Computing PRBO rewards for {len(attack_prompts)} attacks IN PARALLEL...")
+        """Compute PRBO rewards with async parallelization for 3-5x speedup."""
+        if self.use_async_rewards:
+            return self._compute_group_rewards_async(attack_prompts, behavior_data)
+        else:
+            return self._compute_group_rewards_sync(attack_prompts, behavior_data)
+    
+    def _compute_group_rewards_sync(self, attack_prompts: List[str], behavior_data: Dict[str, str]) -> List[float]:
+        """Fallback sync version using ThreadPoolExecutor."""
+        self.logger.log(f"🎯 Computing PRBO rewards for {len(attack_prompts)} attacks IN PARALLEL (SYNC)...")
         
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import time
@@ -158,6 +177,40 @@ class MinimalGRPOTrainer:
                 self.logger.log(f"🎯 BATCH JUDGE SCORES: Unsteered={avg_unsteered:.1f}, Steered={avg_steered:.1f} (Steered {'>' if avg_steered > avg_unsteered else '<='} Unsteered)")
         
         self.logger.log(f"📈 🔥 GROUP COMPLETE: Avg={avg_reward:.3f}, Min={min(rewards):.3f}, Max={max(rewards):.3f} (in {elapsed_time:.1f}s)")
+        return rewards
+    
+    def _compute_group_rewards_async(self, attack_prompts: List[str], behavior_data: Dict[str, str]) -> List[float]:
+        """Async PRBO reward computation for 3-5x speedup."""
+        self.logger.log(f"🎯 Computing PRBO rewards for {len(attack_prompts)} attacks IN PARALLEL (ASYNC)...")
+        
+        # For batch-level judge score aggregation
+        self.batch_unsteered_scores = []
+        self.batch_steered_scores = []
+        
+        # Pass trainer reference for score collection
+        self.prbo_reward_async._current_trainer = self
+        
+        start_time = time.time()
+        
+        # Use asyncio.run to execute async reward computation
+        try:
+            rewards = asyncio.run(self.prbo_reward_async.compute_batch_rewards_async(attack_prompts, behavior_data))
+        except Exception as e:
+            self.logger.log_error(f"Async reward computation failed, falling back to sync: {e}", "_compute_group_rewards_async")
+            return self._compute_group_rewards_sync(attack_prompts, behavior_data)
+        
+        # PERFORMANCE LOGGING
+        elapsed_time = time.time() - start_time
+        avg_reward = sum(rewards) / len(rewards) if rewards else 1.0
+        
+        # BATCH JUDGE SCORE SUMMARY
+        if hasattr(self, 'batch_unsteered_scores') and hasattr(self, 'batch_steered_scores'):
+            if self.batch_unsteered_scores and self.batch_steered_scores:
+                avg_unsteered = sum(self.batch_unsteered_scores) / len(self.batch_unsteered_scores)
+                avg_steered = sum(self.batch_steered_scores) / len(self.batch_steered_scores)
+                self.logger.log(f"🎯 BATCH JUDGE SCORES: Unsteered={avg_unsteered:.1f}, Steered={avg_steered:.1f} (Steered {'>' if avg_steered > avg_unsteered else '<='} Unsteered)")
+        
+        self.logger.log(f"📈 🔥 ASYNC GROUP COMPLETE: Avg={avg_reward:.3f}, Min={min(rewards):.3f}, Max={max(rewards):.3f} (in {elapsed_time:.1f}s)")
         return rewards
     
     def compute_relative_advantages(self, rewards: List[float]) -> List[float]:

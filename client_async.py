@@ -1,28 +1,17 @@
-import os
+"""
+Async extensions for OpenAI client to enable parallel reward computation.
+"""
 import asyncio
-from openai import OpenAI, AsyncOpenAI
-from typing import Optional, List, Dict, Any
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+from typing import List, Dict, Any
+from openai import AsyncOpenAI
+from client import OpenAIClient
 
 
-class OpenAIClient:
-    def __init__(
-        self,
-        base_url: str,
-        model_name: str,
-        api_key: str = "dummy",
-    ):
-        self.base_url = base_url
-        self.model_name = model_name
-        self.api_key = api_key
-        
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key
-        )
+class AsyncOpenAIClient(OpenAIClient):
+    """Extended OpenAI client with async support for parallel operations."""
+    
+    def __init__(self, base_url: str, model_name: str, api_key: str = "dummy"):
+        super().__init__(base_url, model_name, api_key)
         
         # Async client for parallel operations
         self.async_client = AsyncOpenAI(
@@ -30,27 +19,24 @@ class OpenAIClient:
             api_key=api_key
         )
     
-    def generate(
+    async def generate_async(
         self,
         messages: List[Dict[str, str]],
         max_tokens: int = 500,
         temperature: float = 0.7,
-        logprobs: bool = False,
-        top_logprobs: Optional[int] = None,
         **kwargs
     ) -> str:
-        response = self.client.chat.completions.create(
+        """Async version of generate for parallel operations."""
+        response = await self.async_client.chat.completions.create(
             model=self.model_name,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
-            logprobs=logprobs,
-            top_logprobs=top_logprobs,
             **kwargs
         )
         return response.choices[0].message.content
     
-    def generate_with_logprobs(
+    async def generate_with_logprobs_async(
         self,
         messages: List[Dict[str, str]],
         max_tokens: int = 500,
@@ -58,7 +44,8 @@ class OpenAIClient:
         top_logprobs: int = 10,
         **kwargs
     ):
-        response = self.client.chat.completions.create(
+        """Async version of generate_with_logprobs for parallel operations."""
+        response = await self.async_client.chat.completions.create(
             model=self.model_name,
             messages=messages,
             max_tokens=max_tokens,

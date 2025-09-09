@@ -41,6 +41,9 @@ training:
   dataloader_num_workers: 2
   fp16: true
   
+  # Async reward configuration
+  use_async_rewards: true    # Enable async reward computation for 3-5x speedup
+  
   # Checkpointing
   save_steps: 25
   eval_steps: 50

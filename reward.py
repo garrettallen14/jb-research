@@ -170,7 +170,13 @@ class PRBOReward:
             final_reward = (self.prbo_weight * prbo_reward + 
                            self.blackbox_weight * black_box_reward)
             
-            return final_reward
+            # CRITICAL: Scale down rewards to prevent gradient explosion
+            # Large rewards (>100) cause numerical instability in RL training
+            scaled_reward = final_reward / 10.0  # Scale to reasonable range
+            
+            print(f"🎯 FINAL REWARD: {final_reward:.3f} → Scaled: {scaled_reward:.3f}")
+            
+            return scaled_reward
             
         except Exception as e:
             print(f"🔥 PRBO reward computation failed: {e}")
