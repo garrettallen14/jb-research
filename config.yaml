@@ -1,0 +1,32 @@
+# Ultra-Simple JB-Research Configuration
+# Single config file for everything!
+
+# Models
+policy_model: "Qwen/Qwen2.5-3B-Instruct"
+target_url: "${TARGET_BASE_URL}"
+target_model: "${TARGET_MODEL_NAME}"
+target_api_key_env: "TARGET_API_KEY"
+judge_url: "${JUDGE_BASE_URL}"  
+judge_model: "${JUDGE_MODEL_NAME}"
+judge_api_key_env: "JUDGE_API_KEY"
+
+# Training hyperparameters
+batch_size: 8
+group_size: 16
+learning_rate: 5e-8
+max_epochs: 50
+max_grad_norm: 0.001
+
+# Reward settings
+use_steering: true
+reward_scaling: 50.0
+
+# Data
+behaviors_file: "data/data.jsonl"
+max_behaviors: 50  # Limit for faster training
+
+# Hardware
+load_in_4bit: true
+
+# Logging
+log_dir: "logs"
